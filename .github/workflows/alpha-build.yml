@@ -1,45 +1,53 @@
-name: Dynamic OS Version Checker
+name: Check Runner OS Versions
 
 on:
   workflow_dispatch:
 
 jobs:
-  get-matrix:
+  generate-matrix:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
-      - name: Ambil Daftar Runner OS
+      - name: Generate OS Matrix
         id: set-matrix
         run: |
-          # Mengambil tag rilis runner resmi dari GitHub API
-          RUNNERS=$(curl -s https://api.github.com/repos/actions/runner-images/releases | jq -r '.[].tag_name' | grep -E 'ubuntu|win' | head -n 6 | jq -R . | jq -s .)
-          
-          # Jika API rate limit, gunakan fallback versi utama
-          if [ -z "$RUNNERS" ] || [ "$RUNNERS" == "null" ]; then
-            RUNNERS='["ubuntu-latest","ubuntu-24.04","ubuntu-22.04","windows-latest","windows-2025","windows-2022"]'
-          fi
-          
-          echo "matrix={\"os\":$RUNNERS}" >> $GITHUB_OUTPUT
+          # Menyusun JSON daftar runner resmi yang didukung GitHub
+          JSON='{"os":["ubuntu-latest","ubuntu-24.04","ubuntu-22.04","windows-latest","windows-2025","windows-2022"]}'
+          echo "matrix=$JSON" >> $GITHUB_OUTPUT
 
   check-os:
-    needs: get-matrix
+    needs: generate-matrix
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
-      matrix: ${{ fromJson(needs.get-matrix.outputs.matrix) }}
+      matrix: ${{ fromJson(needs.generate-matrix.outputs.matrix) }}
 
     steps:
-      - name: Detail System Linux
+      - name: 🐧 Cek Detail Linux
         if: runner.os == 'Linux'
         run: |
-          echo "### Linux (${{ matrix.os }})" >> $GITHUB_STEP_SUMMARY
-          echo "- **OS:** $(cat /etc/os-release | grep PRETTY_NAME | cut -d'"' -f2)" >> $GITHUB_STEP_SUMMARY
-          echo "- **Kernel:** $(uname -r)" >> $GITHUB_STEP_SUMMARY
+          OS_NAME=$(lsb_release -d | cut -f2 2>/dev/null || cat /etc/os-release | grep PRETTY_NAME | cut -d'"' -f2)
+          KERNEL=$(uname -r)
+          
+          echo "### 🐧 Linux (${{ matrix.os }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **OS:** $OS_NAME" >> $GITHUB_STEP_SUMMARY
+          echo "- **Kernel:** $KERNEL" >> $GITHUB_STEP_SUMMARY
 
-      - name: Detail System Windows
+          echo "OS: $OS_NAME | Kernel: $KERNEL"
+
+      - name: 🪟 Cek Detail Windows
         if: runner.os == 'Windows'
         shell: powershell
         run: |
           $os = Get-CimInstance Win32_OperatingSystem
-          "### Windows (${{ matrix.os }})`n- **OS:** $($os.Caption)`n- **Build:** $($os.BuildNumber)" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          
+          $summary = @"
+          ### 🪟 Windows (${{ matrix.os }})
+          - **OS:** $($os.Caption)
+          - **Build:** $($os.BuildNumber)
+          - **Arch:** $($os.OSArchitecture)
+          "@
+
+          $summary | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          Write-Host "OS: $($os.Caption) | Build: $($os.BuildNumber)"
